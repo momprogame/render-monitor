@@ -1,5 +1,30 @@
-import os
 import asyncio
+import sys
+import threading
+
+# ============ PATCH PARA PYTHON 3.14 ============
+# Este parche permite que Pyrogram funcione en Python 3.14
+if sys.version_info >= (3, 14):
+    print("🔧 Aplicando parche de compatibilidad para Python 3.14...")
+    
+    # Parche para event loop
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    # Parche para typing.Union (error específico de httpcore)
+    import typing
+    if not hasattr(typing.Union, '__module__'):
+        typing.Union.__module__ = 'typing'
+    
+    # Parche para el error de Pyrogram
+    if not hasattr(asyncio, 'get_event_loop'):
+        asyncio.get_event_loop = asyncio.get_running_loop
+
+# ============ IMPORTS NORMALES ============
+import os
 import json
 import logging
 from datetime import datetime
@@ -282,7 +307,7 @@ async def remove_project_command(client: Client, message: Message):
         parse_mode=ParseMode.HTML
     )
     
-    # Esperar confirmación (simple, en producción usaría ConversationHandler)
+    # Esperar confirmación
     try:
         response = await app.listen(chat_id=message.chat.id, timeout=30)
         if response.text and response.text.upper() == "SI":
