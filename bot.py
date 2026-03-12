@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 
 
 API_ID = int(os.getenv("API_ID", "14681595"))
-API_HASH = os.getenv("API_HASH", "a86730aab5c59953c424abb4396d32d5
+API_HASH = os.getenv("API_HASH","a86730aab5c59953c424abb4396d32d5
 ")
 BOT_TOKEN = os.getenv("BOT_TOKEN","8728854601:AAFkSuFMdaNP0OWP5EYfLg9f-hgds-IQ0Pc")
 OWNER_ID = int(os.getenv("OWNER_ID", "7970466590"))
