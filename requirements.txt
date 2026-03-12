@@ -1,5 +1,5 @@
-pyrogram==2.0.106
-httpx==0.24.0
-python-dotenv==1.0.0
+pyrogram
+httpx
+python-dotenv
 tgcrypto
 apscheduler
