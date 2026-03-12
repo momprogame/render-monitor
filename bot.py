@@ -16,13 +16,14 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 
-API_ID = int(os.getenv("API_ID", ""))
-API_HASH = os.getenv("API_HASH", "")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_ID", ""))
+API_ID = int(os.getenv("API_ID", "14681595"))
+API_HASH = os.getenv("API_HASH", "a86730aab5c59953c424abb4396d32d5
+")
+BOT_TOKEN = os.getenv("BOT_TOKEN","8728854601:AAFkSuFMdaNP0OWP5EYfLg9f-hgds-IQ0Pc")
+OWNER_ID = int(os.getenv("OWNER_ID", "7970466590"))
 
-STATUS_CHANNEL_ID = int(os.getenv("STATUS_CHANNEL_ID", ""))
-STATUS_MESSAGE_ID = int(os.getenv("STATUS_MESSAGE_ID", ""))
+STATUS_CHANNEL_ID = int(os.getenv("STATUS_CHANNEL_ID", "3799101536"))
+STATUS_MESSAGE_ID = int(os.getenv("STATUS_MESSAGE_ID", "2"))
 
 CHECK_INTERVAL_MINUTES = 60
 PAGE_SIZE = 10
