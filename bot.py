@@ -1,6 +1,21 @@
 import asyncio
 import sys
 import threading
+import os
+import json
+import logging
+from datetime import datetime
+from math import ceil
+from pathlib import Path
+
+import httpx
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from dotenv import load_dotenv
+from pyrogram import Client, filters
+from pyrogram.enums import ParseMode
+from pyrogram.types import Message
+from aiohttp import web
 
 # ============ PATCH PARA PYTHON 3.14 ============
 if sys.version_info >= (3, 14):
@@ -19,22 +34,6 @@ if sys.version_info >= (3, 14):
     if not hasattr(asyncio, 'get_event_loop'):
         asyncio.get_event_loop = asyncio.get_running_loop
 
-# ============ IMPORTS ============
-import os
-import json
-import logging
-from datetime import datetime
-from math import ceil
-from pathlib import Path
-
-import httpx
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
-from dotenv import load_dotenv
-from pyrogram import Client, filters
-from pyrogram.enums import ParseMode
-from pyrogram.types import Message
-
 # Cargar variables de entorno
 load_dotenv()
 
@@ -46,15 +45,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============ CONFIGURACIÓN ============
-# 🔐 TUS VARIABLES (ya verificadas y funcionando)
+# 🔐 TUS VARIABLES
 API_ID = 14681595
 API_HASH = "a86730aab5c59953c424abb4396d32d5"
 BOT_TOKEN = "8728854601:AAFkSuFMdaNP0OWP5EYfLg9f-hgds-IQ0Pc"
 OWNER_ID = 7970466590
 
-# 📢 CANAL (YA FUNCIONA)
-STATUS_CHANNEL_ID = "@ecanarender"  # ID de 
-STATUS_MESSAGE_ID = 2  # ID del mensaje en el canal
+# 📢 CANAL
+STATUS_CHANNEL_ID = "@ecanarender"
+STATUS_MESSAGE_ID = 2
 
 # ⚙️ Configuración general
 CHECK_INTERVAL_MINUTES = 60
@@ -73,6 +72,48 @@ app = Client(
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
 )
+
+
+# ============ SERVIDOR WEB PARA RENDER ============
+async def health_check(request):
+    """Endpoint para que Render verifique que el bot está vivo"""
+    return web.Response(
+        text="🤖 Render Monitor Bot is running!",
+        content_type="text/html"
+    )
+
+async def status_page(request):
+    """Página de estado simple"""
+    projects_count = len(PROJECTS)
+    html = f"""
+    <html>
+        <head><title>Render Monitor Bot</title></head>
+        <body style="font-family: Arial; padding: 20px;">
+            <h1>🤖 Render Monitor Bot</h1>
+            <p>✅ Bot is running</p>
+            <p>📁 Projects: {projects_count}</p>
+            <p>⏱️ Check interval: {CHECK_INTERVAL_MINUTES} minutes</p>
+            <p>📢 Channel: @ecanarender</p>
+            <p><small>Last check: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small></p>
+        </body>
+    </html>
+    """
+    return web.Response(text=html, content_type="text/html")
+
+async def start_web_server():
+    """Inicia servidor web en el puerto de Render"""
+    port = int(os.environ.get("PORT", 10000))
+    app_web = web.Application()
+    app_web.router.add_get("/", health_check)
+    app_web.router.add_get("/health", health_check)
+    app_web.router.add_get("/status", status_page)
+    
+    runner = web.AppRunner(app_web)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"✅ Web server started on port {port}")
+    logger.info(f"🌐 Status page: http://0.0.0.0:{port}/status")
 
 
 # ============ GESTIÓN DE PROYECTOS ============
@@ -215,6 +256,7 @@ async def check_all_and_update_channel(send_notifications: bool = True) -> tuple
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client: Client, message: Message):
     """Comando /start"""
+    logger.info(f"📨 Received /start from {message.from_user.id}")
     await message.reply(
         "🤖 <b>Render Monitor Bot</b>\n\n"
         "✅ <b>Bot funcionando correctamente</b>\n\n"
@@ -237,7 +279,7 @@ async def start_command(client: Client, message: Message):
 @app.on_message(filters.command("help") & filters.private)
 async def help_command(client: Client, message: Message):
     """Comando /help"""
-    help_text = (
+    await message.reply(
         "<b>📚 AYUDA DETALLADA</b>\n\n"
         
         "<b>📊 COMANDOS DE MONITOREO</b>\n"
@@ -262,9 +304,9 @@ async def help_command(client: Client, message: Message):
         "El bot redeploya automáticamente proyectos 'Down'\n\n"
         
         f"📢 <b>Canal de estado:</b> @ecanarender\n"
-        f"⏱️ <b>Intervalo:</b> {CHECK_INTERVAL_MINUTES} minutos"
+        f"⏱️ <b>Intervalo:</b> {CHECK_INTERVAL_MINUTES} minutos",
+        parse_mode=ParseMode.HTML
     )
-    await message.reply(help_text, parse_mode=ParseMode.HTML)
 
 
 @app.on_message(filters.command("status") & filters.private)
@@ -526,6 +568,10 @@ def start_scheduler(loop):
 async def main():
     """Función principal"""
     logger.info("🚀 Starting bot...")
+    
+    # Iniciar servidor web (para Render)
+    await start_web_server()
+    
     await app.start()
     logger.info("🤖 Bot started successfully")
     logger.info(f"📁 Loaded {len(PROJECTS)} projects from {PROJECTS_FILE}")
@@ -537,7 +583,7 @@ async def main():
     # Primera verificación
     await check_all_and_update_channel(send_notifications=False)
     
-    logger.info("📡 Bot is running...")
+    logger.info("📡 Bot is running and waiting for commands...")
     await asyncio.Event().wait()
 
 
