@@ -7,25 +7,18 @@ from datetime import datetime
 from math import ceil
 from pathlib import Path
 
-# ============ PATCH MEJORADO PARA PYTHON 3.14 ============
+# ============ PATCH PARA PYTHON 3.14 ============
 if sys.version_info >= (3, 14):
-    print("🔧 Aplicando parche mejorado para Python 3.14...")
-    
-    # Crear event loop si no existe
+    print("🔧 Aplicando parche para Python 3.14...")
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     
-    # Parche para typing.Union
     import typing
     if not hasattr(typing.Union, '__module__'):
         typing.Union.__module__ = 'typing'
-    
-    # Parche para asyncio
-    if not hasattr(asyncio, 'get_event_loop'):
-        asyncio.get_event_loop = asyncio.get_running_loop
 
 # ============ IMPORTS ============
 import httpx
@@ -36,7 +29,7 @@ from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
 from pyrogram.types import Message
 
-# ============ SERVIDOR WEB SIMPLE (CORREGIDO) ============
+# ============ SERVIDOR WEB ============
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 
@@ -45,29 +38,10 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
-        
-        if self.path == '/status':
-            html = f"""
-            <html>
-                <head><title>Render Monitor Bot</title></head>
-                <body style="font-family: Arial; padding: 20px;">
-                    <h1>🤖 Render Monitor Bot</h1>
-                    <p>✅ Bot is running</p>
-                    <p>📁 Projects: {len(PROJECTS) if 'PROJECTS' in globals() else 0}</p>
-                    <p>⏱️ Check interval: 60 minutes</p>
-                    <p>📢 Channel: @ecanarender</p>
-                    <p><small>Last check: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small></p>
-                </body>
-            </html>
-            """
-            self.wfile.write(html.encode('utf-8'))
-        else:
-            # CORREGIDO: Codificar el string con emoji a UTF-8
-            response = "🤖 Bot is running"
-            self.wfile.write(response.encode('utf-8'))
+        response = "🤖 Bot is running"
+        self.wfile.write(response.encode('utf-8'))
     
     def log_message(self, format, *args):
-        # Silenciar logs del servidor
         pass
 
 def run_health_server():
@@ -76,7 +50,6 @@ def run_health_server():
     print(f"✅ Health server running on port {port}")
     server.serve_forever()
 
-# Iniciar servidor en un hilo separado
 health_thread = threading.Thread(target=run_health_server, daemon=True)
 health_thread.start()
 
@@ -101,421 +74,111 @@ STATUS_MESSAGE_ID = 2
 
 # ⚙️ Configuración
 CHECK_INTERVAL_MINUTES = 60
-PAGE_SIZE = 10
-HTTP_TIMEOUT = 10
-DEPLOY_TIMEOUT = 30
 PROJECTS_FILE = "projects.json"
 
 # Clientes
-http_client = httpx.AsyncClient(timeout=HTTP_TIMEOUT)
+http_client = httpx.AsyncClient(timeout=10)
 
 app = Client(
     "render_manager_bot",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN
+    bot_token=BOT_TOKEN,
+    workdir="/opt/render/project/src"
 )
 
 
 # ============ GESTIÓN DE PROYECTOS ============
 def load_projects() -> dict:
-    """Carga los proyectos desde el archivo JSON"""
     if Path(PROJECTS_FILE).exists():
         try:
-            with open(PROJECTS_FILE, 'r', encoding='utf-8') as f:
+            with open(PROJECTS_FILE, 'r') as f:
                 return json.load(f)
-        except Exception as e:
-            logger.error(f"Error loading projects: {e}")
+        except:
             return {}
     return {}
 
 def save_projects(projects: dict) -> bool:
-    """Guarda los proyectos en el archivo JSON"""
     try:
-        with open(PROJECTS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(projects, f, indent=2, ensure_ascii=False)
+        with open(PROJECTS_FILE, 'w') as f:
+            json.dump(projects, f, indent=2)
         return True
-    except Exception as e:
-        logger.error(f"Error saving projects: {e}")
+    except:
         return False
 
-# Cargar proyectos al inicio
 PROJECTS = load_projects()
 
 
 # ============ FUNCIONES PRINCIPALES ============
 async def check_app_status(app_url: str) -> str:
-    """Verifica el estado de una aplicación"""
     try:
-        r = await http_client.get(app_url, follow_redirects=True, timeout=HTTP_TIMEOUT)
-        if r.status_code == 200:
-            return "Online"
-        else:
-            return f"Unstable ({r.status_code})"
-    except Exception:
+        r = await http_client.get(app_url, follow_redirects=True)
+        return "Online" if r.status_code == 200 else f"Unstable ({r.status_code})"
+    except:
         return "Down"
 
-async def trigger_render_deploy(deploy_url: str) -> str:
-    """Activa un redeploy en Render"""
-    try:
-        r = await http_client.post(deploy_url, timeout=DEPLOY_TIMEOUT)
-        if r.status_code == 200 or r.status_code == 201:
-            return "✅ Redeploy triggered"
-        else:
-            return f"❌ Deploy failed ({r.status_code})"
-    except Exception as e:
-        return f"❌ Error: {str(e)[:50]}"
-
-def build_status_page(project_names: list, statuses: dict) -> str:
-    """Construye la página de estado"""
-    total = len(project_names)
-    lines = []
-    for idx, name in enumerate(project_names, start=1):
-        status = statuses.get(name, "Unknown")
-        emoji = "🟢" if status == "Online" else ("🟡" if status.startswith("Unstable") else "🔴")
-        lines.append(f"{idx}. <b>{name}</b> — {emoji} {status}")
-    
-    header = (
-        f"📊 <b>Render Monitor</b>\n"
-        f"🕒 Last check: <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code>\n"
-        f"⏱️ Interval: {CHECK_INTERVAL_MINUTES} min\n"
-        f"📁 Projects: {total}\n\n"
-    )
-    
-    body = "\n".join(lines) if lines else "No projects configured"
-    footer = f"\n\n📌 Page 1/{max(1, ceil(total / PAGE_SIZE))}"
-    
-    return header + body + footer
-
-async def check_all_and_update_channel(send_notifications: bool = True) -> tuple:
-    """Verifica todos los proyectos y actualiza el canal"""
+async def check_all_and_update_channel():
     logger.info("🔍 Running periodic check...")
+    for name in PROJECTS:
+        status = await check_app_status(PROJECTS[name]["app_url"])
+        logger.info(f"  {name}: {status}")
     
-    project_names = list(PROJECTS.keys())
-    statuses = {}
-    redeploy_results = {}
-
-    # Verificar estado
-    for name in project_names:
-        statuses[name] = await check_app_status(PROJECTS[name]["app_url"])
-        logger.info(f"  {name}: {statuses[name]}")
-
-    # Auto redeploy
-    for name, status in statuses.items():
-        if status == "Down" and "deploy_url" in PROJECTS[name]:
-            logger.warning(f"⚠️ {name} is Down - triggering redeploy...")
-            result = await trigger_render_deploy(PROJECTS[name]["deploy_url"])
-            redeploy_results[name] = result
-            logger.warning(f"  → {result}")
-
-    # Actualizar canal
-    text = build_status_page(project_names, statuses)
+    text = f"📊 Render Monitor\n🕒 {datetime.now()}\n📁 Projects: {len(PROJECTS)}"
     try:
-        await app.edit_message_text(
-            chat_id=STATUS_CHANNEL_ID,
-            message_id=STATUS_MESSAGE_ID,
-            text=text,
-            parse_mode=ParseMode.HTML
-        )
-        logger.info("✅ Channel status updated")
+        await app.edit_message_text(STATUS_CHANNEL_ID, STATUS_MESSAGE_ID, text)
+        logger.info("✅ Channel updated")
     except Exception as e:
-        logger.error(f"❌ Failed to update channel: {e}")
-
-    # Notificar al admin
-    if redeploy_results and send_notifications:
-        msg = "🔄 <b>Auto-redeploy Summary</b>\n\n"
-        for name, result in redeploy_results.items():
-            msg += f"• {name}: {result}\n"
-        try:
-            await app.send_message(OWNER_ID, msg, parse_mode=ParseMode.HTML)
-        except Exception as e:
-            logger.error(f"❌ Failed to notify owner: {e}")
-
-    return statuses, redeploy_results
+        logger.error(f"❌ Channel error: {e}")
 
 
-# ============ COMANDOS ============
+# ============ COMANDOS CON DIAGNÓSTICO ============
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client: Client, message: Message):
-    """Comando /start"""
-    logger.info(f"📨 Received /start from {message.from_user.id}")
+    logger.info(f"🔥🔥🔥 RECEIVED /start from {message.from_user.id}")
+    logger.info(f"Message: {message.text}")
+    
     await message.reply(
-        "🤖 <b>Render Monitor Bot</b>\n\n"
-        "✅ <b>Bot funcionando correctamente</b>\n\n"
-        "<b>COMANDOS DISPONIBLES:</b>\n\n"
-        "📊 <b>Monitoreo:</b>\n"
-        "/status - Ver estado actual\n"
-        "/check - Forzar verificación\n"
-        "/redeploy [nombre] - Redeploy manual\n\n"
-        "📝 <b>Gestión:</b>\n"
-        "/add - Añadir proyecto\n"
-        "/remove - Eliminar proyecto\n"
-        "/projects - Listar proyectos\n"
-        "/deployhook - Configurar deploy hook\n\n"
-        "❓ /help - Ayuda detallada\n\n"
-        f"📢 <b>Canal de estado:</b> @ecanarender"
+        f"✅ Bot funcionando!\n\n"
+        f"Tu ID: {message.from_user.id}\n"
+        f"Username: @{message.from_user.username}\n"
+        f"Es admin: {message.from_user.id == OWNER_ID}"
     )
 
-@app.on_message(filters.command("help") & filters.private)
-async def help_command(client: Client, message: Message):
-    """Comando /help"""
-    await message.reply(
-        "<b>📚 AYUDA DETALLADA</b>\n\n"
-        
-        "<b>📊 COMANDOS DE MONITOREO</b>\n"
-        "• /status - Muestra el estado actual\n"
-        "• /check - Fuerza verificación inmediata\n"
-        "• /redeploy [nombre] - Redeploy manual\n\n"
-        
-        "<b>📝 COMANDOS DE GESTIÓN</b>\n"
-        "• /add Nombre | URL | DeployHook\n"
-        "  Ej: <code>/add MiApp | https://miapp.onrender.com | https://api.render.com/deploy/...</code>\n\n"
-        
-        "• /remove Nombre\n"
-        "  Ej: <code>/remove MiApp</code>\n\n"
-        
-        "• /projects - Lista todos los proyectos\n"
-        "• /deployhook Nombre | URL - Configurar deploy hook\n"
-        "  (usar 'none' para eliminar)\n\n"
-        
-        "<b>⚙️ AUTO-REDEPLOY</b>\n"
-        "El bot redeploya automáticamente proyectos 'Down'\n\n"
-        
-        f"📢 <b>Canal de estado:</b> @ecanarender\n"
-        f"⏱️ <b>Intervalo:</b> {CHECK_INTERVAL_MINUTES} minutos",
-        parse_mode=ParseMode.HTML
-    )
-
-@app.on_message(filters.command("status") & filters.private)
-async def status_command(client: Client, message: Message):
-    """Comando /status"""
-    await message.reply("🔍 Verificando estado...")
-    
-    project_names = list(PROJECTS.keys())
-    statuses = {}
-    
-    for name in project_names:
-        statuses[name] = await check_app_status(PROJECTS[name]["app_url"])
-    
-    text = build_status_page(project_names, statuses)
-    await message.reply(text, parse_mode=ParseMode.HTML)
-
-@app.on_message(filters.command("check") & filters.private)
-async def check_command(client: Client, message: Message):
-    """Comando /check"""
-    if message.from_user.id != OWNER_ID:
-        await message.reply("❌ No autorizado")
-        return
-    
-    msg = await message.reply("🔄 Forzando verificación...")
-    statuses, redeploys = await check_all_and_update_channel(send_notifications=True)
-    
-    result = "✅ Verificación completada" + (" con redeploys" if redeploys else " - todo OK")
-    await msg.edit_text(result)
-
-@app.on_message(filters.command("projects") & filters.private)
-async def list_projects_command(client: Client, message: Message):
-    """Comando /projects"""
-    if not PROJECTS:
-        await message.reply("📭 No hay proyectos configurados")
-        return
-    
-    text = "<b>📋 PROYECTOS CONFIGURADOS</b>\n\n"
-    
-    for idx, (name, config) in enumerate(PROJECTS.items(), 1):
-        has_deploy = "✅" if "deploy_url" in config else "❌"
-        text += f"<b>{idx}. {name}</b>\n"
-        text += f"   📍 URL: <code>{config['app_url'][:50]}...</code>\n"
-        text += f"   🔄 Deploy Hook: {has_deploy}\n\n"
-    
-    text += f"📌 Total: {len(PROJECTS)} proyectos"
-    await message.reply(text, parse_mode=ParseMode.HTML)
-
-@app.on_message(filters.command("add") & filters.private)
-async def add_project_command(client: Client, message: Message):
-    """Comando /add"""
-    if message.from_user.id != OWNER_ID:
-        await message.reply("❌ No autorizado")
-        return
-    
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.reply(
-            "❌ Uso: <code>/add Nombre | URL | DeployHook</code>\n"
-            "Ejemplo: <code>/add MiApp | https://miapp.onrender.com | https://api.render.com/deploy/...</code>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    
-    parts = [p.strip() for p in args[1].split("|")]
-    if len(parts) < 2:
-        await message.reply("❌ Debes especificar al menos nombre y URL")
-        return
-    
-    name = parts[0]
-    app_url = parts[1]
-    deploy_url = parts[2] if len(parts) > 2 else None
-    
-    if not app_url.startswith(("http://", "https://")):
-        await message.reply("❌ La URL debe comenzar con http:// o https://")
-        return
-    
-    if name in PROJECTS:
-        await message.reply(f"❌ Ya existe '{name}'")
-        return
-    
-    PROJECTS[name] = {"app_url": app_url}
-    if deploy_url:
-        PROJECTS[name]["deploy_url"] = deploy_url
-    
-    if save_projects(PROJECTS):
-        await message.reply(f"✅ Proyecto <b>{name}</b> añadido", parse_mode=ParseMode.HTML)
-        await check_all_and_update_channel(send_notifications=False)
-    else:
-        await message.reply("❌ Error al guardar")
-
-@app.on_message(filters.command("remove") & filters.private)
-async def remove_project_command(client: Client, message: Message):
-    """Comando /remove"""
-    if message.from_user.id != OWNER_ID:
-        await message.reply("❌ No autorizado")
-        return
-    
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.reply("❌ Uso: /remove Nombre")
-        return
-    
-    name = args[1].strip()
-    if name not in PROJECTS:
-        await message.reply(f"❌ No existe '{name}'")
-        return
-    
-    del PROJECTS[name]
-    if save_projects(PROJECTS):
-        await message.reply(f"✅ Proyecto <b>{name}</b> eliminado", parse_mode=ParseMode.HTML)
-        await check_all_and_update_channel(send_notifications=False)
-    else:
-        await message.reply("❌ Error al guardar")
-
-@app.on_message(filters.command("redeploy") & filters.private)
-async def redeploy_command(client: Client, message: Message):
-    """Comando /redeploy"""
-    if message.from_user.id != OWNER_ID:
-        await message.reply("❌ No autorizado")
-        return
-    
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        projects_list = "\n".join([f"• {name}" for name in PROJECTS.keys()])
-        await message.reply(f"❌ Especifica un proyecto:\n\n{projects_list}")
-        return
-    
-    name = args[1].strip()
-    if name not in PROJECTS:
-        await message.reply(f"❌ Proyecto '{name}' no encontrado")
-        return
-    
-    if "deploy_url" not in PROJECTS[name]:
-        await message.reply(f"❌ '{name}' no tiene deploy hook configurado")
-        return
-    
-    msg = await message.reply(f"🔄 Redeployando {name}...")
-    result = await trigger_render_deploy(PROJECTS[name]["deploy_url"])
-    await msg.edit_text(f"📌 {name}: {result}")
-
-@app.on_message(filters.command("deployhook") & filters.private)
-async def deployhook_command(client: Client, message: Message):
-    """Comando /deployhook"""
-    if message.from_user.id != OWNER_ID:
-        await message.reply("❌ No autorizado")
-        return
-    
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.reply(
-            "❌ Uso: /deployhook Nombre | URL\n"
-            "Para eliminar: /deployhook Nombre | none"
-        )
-        return
-    
-    parts = [p.strip() for p in args[1].split("|")]
-    if len(parts) < 2:
-        await message.reply("❌ Formato: Nombre | URL")
-        return
-    
-    name = parts[0]
-    deploy_url = parts[1]
-    
-    if name not in PROJECTS:
-        await message.reply(f"❌ No existe '{name}'")
-        return
-    
-    if deploy_url.lower() == "none":
-        if "deploy_url" in PROJECTS[name]:
-            del PROJECTS[name]["deploy_url"]
-            msg = f"✅ Deploy hook eliminado de <b>{name}</b>"
-        else:
-            msg = f"ℹ️ {name} no tenía deploy hook"
-    else:
-        if not deploy_url.startswith(("http://", "https://")):
-            await message.reply("❌ URL debe comenzar con http:// o https://")
-            return
-        PROJECTS[name]["deploy_url"] = deploy_url
-        msg = f"✅ Deploy hook configurado para <b>{name}</b>"
-    
-    if save_projects(PROJECTS):
-        await message.reply(msg, parse_mode=ParseMode.HTML)
-    else:
-        await message.reply("❌ Error al guardar")
+@app.on_message(filters.private)
+async def echo_all(client: Client, message: Message):
+    logger.info(f"📨 RECEIVED: {message.text} from {message.from_user.id}")
+    await message.reply(f"Eco: {message.text}")
 
 
-# ============ SCHEDULER Y MAIN ============
+# ============ MAIN ============
 def start_scheduler(loop):
-    """Inicia el scheduler"""
     scheduler = AsyncIOScheduler()
-    
     async def run_check():
-        await check_all_and_update_channel(send_notifications=True)
-    
+        await check_all_and_update_channel()
     scheduler.add_job(
         lambda: asyncio.run_coroutine_threadsafe(run_check(), loop),
-        trigger=IntervalTrigger(minutes=CHECK_INTERVAL_MINUTES),
-        id="auto_check_job",
-        replace_existing=True,
+        trigger=IntervalTrigger(minutes=CHECK_INTERVAL_MINUTES)
     )
     scheduler.start()
-    logger.info(f"✅ Scheduler started - checking every {CHECK_INTERVAL_MINUTES} minutes")
+    logger.info(f"✅ Scheduler started")
 
 async def main():
-    """Función principal"""
     logger.info("🚀 Starting bot...")
     
-    # Iniciar cliente de Pyrogram
     await app.start()
-    logger.info("🤖 Bot started successfully")
-    logger.info(f"📁 Loaded {len(PROJECTS)} projects from {PROJECTS_FILE}")
-    logger.info(f"📢 Status channel: @ecanarender (ID: {STATUS_CHANNEL_ID})")
+    logger.info("🤖 Bot started")
     
-    # Iniciar scheduler
-    loop = asyncio.get_running_loop()
-    start_scheduler(loop)
+    me = await app.get_me()
+    logger.info(f"🤖 Bot @{me.username} (ID: {me.id})")
     
-    # Primera verificación
-    await check_all_and_update_channel(send_notifications=False)
+    start_scheduler(asyncio.get_running_loop())
+    await check_all_and_update_channel()
     
-    logger.info("📡 Bot is running and waiting for commands...")
-    
-    # Mantener el bot corriendo
+    logger.info("📡 Bot is running...")
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("👋 Bot stopped by user")
-    except Exception as e:
-        logger.error(f"💥 Fatal error: {e}")
-    finally:
-        # Cerrar cliente HTTP
-        asyncio.run(http_client.aclose())
+        logger.info("👋 Bot stopped")
