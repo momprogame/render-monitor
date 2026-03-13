@@ -8,7 +8,6 @@ from math import ceil
 from pathlib import Path
 
 # ============ PATCH MEJORADO PARA PYTHON 3.14 ============
-# ESTO DEBE IR ANTES DE CUALQUIER OTRO IMPORT
 if sys.version_info >= (3, 14):
     print("🔧 Aplicando parche mejorado para Python 3.14...")
     
@@ -37,16 +36,16 @@ from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
 from pyrogram.types import Message
 
-# ============ SERVIDOR WEB SIMPLE ============
-# Usamos http.server en lugar de aiohttp para evitar problemas
+# ============ SERVIDOR WEB SIMPLE (CORREGIDO) ============
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
-        self.send_header('Content-type', 'text/html')
+        self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
+        
         if self.path == '/status':
             html = f"""
             <html>
@@ -61,9 +60,11 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                 </body>
             </html>
             """
-            self.wfile.write(html.encode())
+            self.wfile.write(html.encode('utf-8'))
         else:
-            self.wfile.write(b"🤖 Bot is running")
+            # CORREGIDO: Codificar el string con emoji a UTF-8
+            response = "🤖 Bot is running"
+            self.wfile.write(response.encode('utf-8'))
     
     def log_message(self, format, *args):
         # Silenciar logs del servidor
@@ -118,6 +119,7 @@ app = Client(
 
 # ============ GESTIÓN DE PROYECTOS ============
 def load_projects() -> dict:
+    """Carga los proyectos desde el archivo JSON"""
     if Path(PROJECTS_FILE).exists():
         try:
             with open(PROJECTS_FILE, 'r', encoding='utf-8') as f:
@@ -128,6 +130,7 @@ def load_projects() -> dict:
     return {}
 
 def save_projects(projects: dict) -> bool:
+    """Guarda los proyectos en el archivo JSON"""
     try:
         with open(PROJECTS_FILE, 'w', encoding='utf-8') as f:
             json.dump(projects, f, indent=2, ensure_ascii=False)
@@ -136,11 +139,13 @@ def save_projects(projects: dict) -> bool:
         logger.error(f"Error saving projects: {e}")
         return False
 
+# Cargar proyectos al inicio
 PROJECTS = load_projects()
 
 
 # ============ FUNCIONES PRINCIPALES ============
 async def check_app_status(app_url: str) -> str:
+    """Verifica el estado de una aplicación"""
     try:
         r = await http_client.get(app_url, follow_redirects=True, timeout=HTTP_TIMEOUT)
         if r.status_code == 200:
@@ -151,6 +156,7 @@ async def check_app_status(app_url: str) -> str:
         return "Down"
 
 async def trigger_render_deploy(deploy_url: str) -> str:
+    """Activa un redeploy en Render"""
     try:
         r = await http_client.post(deploy_url, timeout=DEPLOY_TIMEOUT)
         if r.status_code == 200 or r.status_code == 201:
@@ -161,6 +167,7 @@ async def trigger_render_deploy(deploy_url: str) -> str:
         return f"❌ Error: {str(e)[:50]}"
 
 def build_status_page(project_names: list, statuses: dict) -> str:
+    """Construye la página de estado"""
     total = len(project_names)
     lines = []
     for idx, name in enumerate(project_names, start=1):
@@ -168,26 +175,32 @@ def build_status_page(project_names: list, statuses: dict) -> str:
         emoji = "🟢" if status == "Online" else ("🟡" if status.startswith("Unstable") else "🔴")
         lines.append(f"{idx}. <b>{name}</b> — {emoji} {status}")
     
-    return (
+    header = (
         f"📊 <b>Render Monitor</b>\n"
         f"🕒 Last check: <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code>\n"
         f"⏱️ Interval: {CHECK_INTERVAL_MINUTES} min\n"
         f"📁 Projects: {total}\n\n"
-        f"{chr(10).join(lines) if lines else 'No projects configured'}\n\n"
-        f"📌 Page 1/{max(1, ceil(total / PAGE_SIZE))}"
     )
+    
+    body = "\n".join(lines) if lines else "No projects configured"
+    footer = f"\n\n📌 Page 1/{max(1, ceil(total / PAGE_SIZE))}"
+    
+    return header + body + footer
 
 async def check_all_and_update_channel(send_notifications: bool = True) -> tuple:
+    """Verifica todos los proyectos y actualiza el canal"""
     logger.info("🔍 Running periodic check...")
     
     project_names = list(PROJECTS.keys())
     statuses = {}
     redeploy_results = {}
 
+    # Verificar estado
     for name in project_names:
         statuses[name] = await check_app_status(PROJECTS[name]["app_url"])
         logger.info(f"  {name}: {statuses[name]}")
 
+    # Auto redeploy
     for name, status in statuses.items():
         if status == "Down" and "deploy_url" in PROJECTS[name]:
             logger.warning(f"⚠️ {name} is Down - triggering redeploy...")
@@ -195,6 +208,7 @@ async def check_all_and_update_channel(send_notifications: bool = True) -> tuple
             redeploy_results[name] = result
             logger.warning(f"  → {result}")
 
+    # Actualizar canal
     text = build_status_page(project_names, statuses)
     try:
         await app.edit_message_text(
@@ -207,8 +221,11 @@ async def check_all_and_update_channel(send_notifications: bool = True) -> tuple
     except Exception as e:
         logger.error(f"❌ Failed to update channel: {e}")
 
+    # Notificar al admin
     if redeploy_results and send_notifications:
-        msg = "🔄 <b>Auto-redeploy Summary</b>\n\n" + "\n".join([f"• {n}: {r}" for n, r in redeploy_results.items()])
+        msg = "🔄 <b>Auto-redeploy Summary</b>\n\n"
+        for name, result in redeploy_results.items():
+            msg += f"• {name}: {result}\n"
         try:
             await app.send_message(OWNER_ID, msg, parse_mode=ParseMode.HTML)
         except Exception as e:
@@ -220,61 +237,129 @@ async def check_all_and_update_channel(send_notifications: bool = True) -> tuple
 # ============ COMANDOS ============
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client: Client, message: Message):
+    """Comando /start"""
     logger.info(f"📨 Received /start from {message.from_user.id}")
     await message.reply(
-        "🤖 <b>Render Monitor Bot</b>\n\n✅ <b>Bot funcionando correctamente</b>\n\n"
-        "📊 <b>Comandos:</b>\n/status - Ver estado\n/check - Forzar verificación\n"
-        "/redeploy [nombre] - Redeploy manual\n/add - Añadir proyecto\n"
-        "/remove - Eliminar proyecto\n/projects - Listar proyectos\n"
-        "/help - Ayuda detallada\n\n📢 <b>Canal:</b> @ecanarender"
+        "🤖 <b>Render Monitor Bot</b>\n\n"
+        "✅ <b>Bot funcionando correctamente</b>\n\n"
+        "<b>COMANDOS DISPONIBLES:</b>\n\n"
+        "📊 <b>Monitoreo:</b>\n"
+        "/status - Ver estado actual\n"
+        "/check - Forzar verificación\n"
+        "/redeploy [nombre] - Redeploy manual\n\n"
+        "📝 <b>Gestión:</b>\n"
+        "/add - Añadir proyecto\n"
+        "/remove - Eliminar proyecto\n"
+        "/projects - Listar proyectos\n"
+        "/deployhook - Configurar deploy hook\n\n"
+        "❓ /help - Ayuda detallada\n\n"
+        f"📢 <b>Canal de estado:</b> @ecanarender"
+    )
+
+@app.on_message(filters.command("help") & filters.private)
+async def help_command(client: Client, message: Message):
+    """Comando /help"""
+    await message.reply(
+        "<b>📚 AYUDA DETALLADA</b>\n\n"
+        
+        "<b>📊 COMANDOS DE MONITOREO</b>\n"
+        "• /status - Muestra el estado actual\n"
+        "• /check - Fuerza verificación inmediata\n"
+        "• /redeploy [nombre] - Redeploy manual\n\n"
+        
+        "<b>📝 COMANDOS DE GESTIÓN</b>\n"
+        "• /add Nombre | URL | DeployHook\n"
+        "  Ej: <code>/add MiApp | https://miapp.onrender.com | https://api.render.com/deploy/...</code>\n\n"
+        
+        "• /remove Nombre\n"
+        "  Ej: <code>/remove MiApp</code>\n\n"
+        
+        "• /projects - Lista todos los proyectos\n"
+        "• /deployhook Nombre | URL - Configurar deploy hook\n"
+        "  (usar 'none' para eliminar)\n\n"
+        
+        "<b>⚙️ AUTO-REDEPLOY</b>\n"
+        "El bot redeploya automáticamente proyectos 'Down'\n\n"
+        
+        f"📢 <b>Canal de estado:</b> @ecanarender\n"
+        f"⏱️ <b>Intervalo:</b> {CHECK_INTERVAL_MINUTES} minutos",
+        parse_mode=ParseMode.HTML
     )
 
 @app.on_message(filters.command("status") & filters.private)
 async def status_command(client: Client, message: Message):
+    """Comando /status"""
     await message.reply("🔍 Verificando estado...")
+    
     project_names = list(PROJECTS.keys())
-    statuses = {name: await check_app_status(PROJECTS[name]["app_url"]) for name in project_names}
-    await message.reply(build_status_page(project_names, statuses), parse_mode=ParseMode.HTML)
+    statuses = {}
+    
+    for name in project_names:
+        statuses[name] = await check_app_status(PROJECTS[name]["app_url"])
+    
+    text = build_status_page(project_names, statuses)
+    await message.reply(text, parse_mode=ParseMode.HTML)
 
 @app.on_message(filters.command("check") & filters.private)
 async def check_command(client: Client, message: Message):
+    """Comando /check"""
     if message.from_user.id != OWNER_ID:
         await message.reply("❌ No autorizado")
         return
+    
     msg = await message.reply("🔄 Forzando verificación...")
-    _, redeploys = await check_all_and_update_channel(send_notifications=True)
-    await msg.edit_text("✅ Verificación completada" + (" con redeploys" if redeploys else " - todo OK"))
+    statuses, redeploys = await check_all_and_update_channel(send_notifications=True)
+    
+    result = "✅ Verificación completada" + (" con redeploys" if redeploys else " - todo OK")
+    await msg.edit_text(result)
 
 @app.on_message(filters.command("projects") & filters.private)
 async def list_projects_command(client: Client, message: Message):
+    """Comando /projects"""
     if not PROJECTS:
         await message.reply("📭 No hay proyectos configurados")
         return
-    text = "<b>📋 PROYECTOS</b>\n\n" + "\n\n".join([
-        f"<b>{idx}. {name}</b>\n📍 <code>{cfg['app_url'][:50]}...</code>\n🔄 {'✅' if 'deploy_url' in cfg else '❌'}"
-        for idx, (name, cfg) in enumerate(PROJECTS.items(), 1)
-    ]) + f"\n\n📌 Total: {len(PROJECTS)}"
+    
+    text = "<b>📋 PROYECTOS CONFIGURADOS</b>\n\n"
+    
+    for idx, (name, config) in enumerate(PROJECTS.items(), 1):
+        has_deploy = "✅" if "deploy_url" in config else "❌"
+        text += f"<b>{idx}. {name}</b>\n"
+        text += f"   📍 URL: <code>{config['app_url'][:50]}...</code>\n"
+        text += f"   🔄 Deploy Hook: {has_deploy}\n\n"
+    
+    text += f"📌 Total: {len(PROJECTS)} proyectos"
     await message.reply(text, parse_mode=ParseMode.HTML)
 
 @app.on_message(filters.command("add") & filters.private)
 async def add_project_command(client: Client, message: Message):
+    """Comando /add"""
     if message.from_user.id != OWNER_ID:
         await message.reply("❌ No autorizado")
         return
+    
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        await message.reply("❌ Uso: /add Nombre | URL | DeployHook")
+        await message.reply(
+            "❌ Uso: <code>/add Nombre | URL | DeployHook</code>\n"
+            "Ejemplo: <code>/add MiApp | https://miapp.onrender.com | https://api.render.com/deploy/...</code>",
+            parse_mode=ParseMode.HTML
+        )
         return
+    
     parts = [p.strip() for p in args[1].split("|")]
     if len(parts) < 2:
-        await message.reply("❌ Debes especificar nombre y URL")
+        await message.reply("❌ Debes especificar al menos nombre y URL")
         return
-    name, app_url = parts[0], parts[1]
+    
+    name = parts[0]
+    app_url = parts[1]
     deploy_url = parts[2] if len(parts) > 2 else None
     
     if not app_url.startswith(("http://", "https://")):
-        await message.reply("❌ URL debe comenzar con http:// o https://")
+        await message.reply("❌ La URL debe comenzar con http:// o https://")
         return
+    
     if name in PROJECTS:
         await message.reply(f"❌ Ya existe '{name}'")
         return
@@ -291,17 +376,21 @@ async def add_project_command(client: Client, message: Message):
 
 @app.on_message(filters.command("remove") & filters.private)
 async def remove_project_command(client: Client, message: Message):
+    """Comando /remove"""
     if message.from_user.id != OWNER_ID:
         await message.reply("❌ No autorizado")
         return
+    
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         await message.reply("❌ Uso: /remove Nombre")
         return
+    
     name = args[1].strip()
     if name not in PROJECTS:
         await message.reply(f"❌ No existe '{name}'")
         return
+    
     del PROJECTS[name]
     if save_projects(PROJECTS):
         await message.reply(f"✅ Proyecto <b>{name}</b> eliminado", parse_mode=ParseMode.HTML)
@@ -311,55 +400,57 @@ async def remove_project_command(client: Client, message: Message):
 
 @app.on_message(filters.command("redeploy") & filters.private)
 async def redeploy_command(client: Client, message: Message):
+    """Comando /redeploy"""
     if message.from_user.id != OWNER_ID:
         await message.reply("❌ No autorizado")
         return
+    
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        await message.reply(f"❌ Especifica un proyecto:\n{chr(10).join(PROJECTS.keys())}")
+        projects_list = "\n".join([f"• {name}" for name in PROJECTS.keys()])
+        await message.reply(f"❌ Especifica un proyecto:\n\n{projects_list}")
         return
+    
     name = args[1].strip()
     if name not in PROJECTS:
         await message.reply(f"❌ Proyecto '{name}' no encontrado")
         return
+    
     if "deploy_url" not in PROJECTS[name]:
-        await message.reply(f"❌ '{name}' no tiene deploy hook")
+        await message.reply(f"❌ '{name}' no tiene deploy hook configurado")
         return
+    
     msg = await message.reply(f"🔄 Redeployando {name}...")
     result = await trigger_render_deploy(PROJECTS[name]["deploy_url"])
     await msg.edit_text(f"📌 {name}: {result}")
 
-@app.on_message(filters.command("help") & filters.private)
-async def help_command(client: Client, message: Message):
-    await message.reply(
-        "<b>📚 AYUDA</b>\n\n"
-        "/add Nombre | URL | Hook - Añadir proyecto\n"
-        "/remove Nombre - Eliminar proyecto\n"
-        "/projects - Listar proyectos\n"
-        "/status - Ver estado\n"
-        "/check - Forzar verificación\n"
-        "/redeploy Nombre - Redeploy manual\n"
-        "/deployhook Nombre | URL - Configurar hook",
-        parse_mode=ParseMode.HTML
-    )
-
 @app.on_message(filters.command("deployhook") & filters.private)
 async def deployhook_command(client: Client, message: Message):
+    """Comando /deployhook"""
     if message.from_user.id != OWNER_ID:
         await message.reply("❌ No autorizado")
         return
+    
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        await message.reply("❌ Uso: /deployhook Nombre | URL")
+        await message.reply(
+            "❌ Uso: /deployhook Nombre | URL\n"
+            "Para eliminar: /deployhook Nombre | none"
+        )
         return
+    
     parts = [p.strip() for p in args[1].split("|")]
     if len(parts) < 2:
         await message.reply("❌ Formato: Nombre | URL")
         return
-    name, deploy_url = parts[0], parts[1]
+    
+    name = parts[0]
+    deploy_url = parts[1]
+    
     if name not in PROJECTS:
         await message.reply(f"❌ No existe '{name}'")
         return
+    
     if deploy_url.lower() == "none":
         if "deploy_url" in PROJECTS[name]:
             del PROJECTS[name]["deploy_url"]
@@ -372,6 +463,7 @@ async def deployhook_command(client: Client, message: Message):
             return
         PROJECTS[name]["deploy_url"] = deploy_url
         msg = f"✅ Deploy hook configurado para <b>{name}</b>"
+    
     if save_projects(PROJECTS):
         await message.reply(msg, parse_mode=ParseMode.HTML)
     else:
@@ -380,26 +472,41 @@ async def deployhook_command(client: Client, message: Message):
 
 # ============ SCHEDULER Y MAIN ============
 def start_scheduler(loop):
+    """Inicia el scheduler"""
     scheduler = AsyncIOScheduler()
+    
     async def run_check():
         await check_all_and_update_channel(send_notifications=True)
+    
     scheduler.add_job(
         lambda: asyncio.run_coroutine_threadsafe(run_check(), loop),
-        trigger=IntervalTrigger(minutes=CHECK_INTERVAL_MINUTES)
+        trigger=IntervalTrigger(minutes=CHECK_INTERVAL_MINUTES),
+        id="auto_check_job",
+        replace_existing=True,
     )
     scheduler.start()
     logger.info(f"✅ Scheduler started - checking every {CHECK_INTERVAL_MINUTES} minutes")
 
 async def main():
+    """Función principal"""
     logger.info("🚀 Starting bot...")
+    
+    # Iniciar cliente de Pyrogram
     await app.start()
     logger.info("🤖 Bot started successfully")
-    logger.info(f"📁 Loaded {len(PROJECTS)} projects")
+    logger.info(f"📁 Loaded {len(PROJECTS)} projects from {PROJECTS_FILE}")
+    logger.info(f"📢 Status channel: @ecanarender (ID: {STATUS_CHANNEL_ID})")
     
-    start_scheduler(asyncio.get_running_loop())
+    # Iniciar scheduler
+    loop = asyncio.get_running_loop()
+    start_scheduler(loop)
+    
+    # Primera verificación
     await check_all_and_update_channel(send_notifications=False)
     
     logger.info("📡 Bot is running and waiting for commands...")
+    
+    # Mantener el bot corriendo
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
@@ -410,4 +517,5 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"💥 Fatal error: {e}")
     finally:
+        # Cerrar cliente HTTP
         asyncio.run(http_client.aclose())
